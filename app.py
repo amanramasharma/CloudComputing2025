@@ -1,7 +1,8 @@
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, render_template_string
 from google.cloud import bigquery
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 
 app = Flask(__name__)
 client = bigquery.Client()
@@ -9,75 +10,77 @@ client = bigquery.Client()
 TEMPLATE = """
 <!doctype html>
 <html>
-  <head>
-    <title>TheLook Dashboard</title>
-    <meta charset="utf-8">
-  </head>
-  <body>
-    <h1>Top 5 Product Categories by Order Count</h1>
-    <div>{{ plot_div|safe }}</div>
-    <h2>API Access</h2>
-    <p>To access the raw data in JSON format, use <code>/api/data</code></p>
+<head>
+  <title>Business Insights Dashboard</title>
+  <meta charset="utf-8">
+</head>
+<body>
+  <h1>Revenue by Traffic Source and Age Group</h1>
+  <div>{{ traffic_chart|safe }}</div>
 
-    <h2>Run ML Prediction</h2>
-    <form action="/predict" method="get">
-      <button type="submit">Run ML Clustering Prediction</button>
-    </form>
-  </body>
+  <h2>Top Product Categories by Order Count</h2>
+  <div>{{ category_chart|safe }}</div>
+</body>
 </html>
 """
 
 @app.route("/")
-def index():
+def dashboard():
+    traffic_df = get_traffic_data()
+    category_df = get_category_data()
+
+    fig1 = px.bar(
+        traffic_df,
+        x="traffic_source",
+        y="total_revenue",
+        color="age_group",
+        title="Revenue by Traffic Source and Age Group"
+    )
+    traffic_chart = pio.to_html(fig1, full_html=False)
+
+    fig2 = px.pie(
+        category_df,
+        names="category",
+        values="order_count",
+        title="Top Product Categories by Orders"
+    )
+    category_chart = pio.to_html(fig2, full_html=False)
+
+    return render_template_string(TEMPLATE, traffic_chart=traffic_chart, category_chart=category_chart)
+
+def get_traffic_data():
     query = """
-        SELECT p.category, COUNT(*) AS order_count
-        FROM `comm034coursework-6875078.thelook.order_items` AS oi
-        JOIN `comm034coursework-6875078.thelook.products` AS p
-        ON oi.product_id = p.id
-        GROUP BY p.category
+        SELECT
+          u.traffic_source,
+          CASE
+            WHEN u.age < 25 THEN 'Under 25'
+            WHEN u.age BETWEEN 25 AND 34 THEN '25–34'
+            WHEN u.age BETWEEN 35 AND 44 THEN '35–44'
+            WHEN u.age BETWEEN 45 AND 54 THEN '45–54'
+            ELSE '55+'
+          END AS age_group,
+          ROUND(SUM(oi.sale_price), 2) AS total_revenue
+        FROM `comm034coursework-6875078.thelook.users` u
+        JOIN `comm034coursework-6875078.thelook.orders` o ON u.id = o.user_id
+        JOIN `comm034coursework-6875078.thelook.order_items` oi ON o.order_id = oi.order_id
+        WHERE o.status = 'Complete'
+        GROUP BY traffic_source, age_group
+        ORDER BY total_revenue DESC
+    """
+    return client.query(query).to_dataframe()
+
+def get_category_data():
+    query = """
+        SELECT
+          p.category,
+          COUNT(*) AS order_count
+        FROM `comm034coursework-6875078.thelook.order_items` oi
+        JOIN `comm034coursework-6875078.thelook.products` p ON oi.product_id = p.id
+        GROUP BY category
         ORDER BY order_count DESC
         LIMIT 5
     """
-    df = client.query(query).to_dataframe()
-    fig = px.bar(df, x='category', y='order_count', title='Top 5 Categories')
-    plot_div = fig.to_html(full_html=False)
-    return render_template_string(TEMPLATE, plot_div=plot_div)
+    return client.query(query).to_dataframe()
 
-@app.route("/api/data")
-def api_data():
-    query = """
-        SELECT p.category, COUNT(*) AS order_count
-        FROM `comm034coursework-6875078.thelook.order_items` AS oi
-        JOIN `comm034coursework-6875078.thelook.products` AS p
-        ON oi.product_id = p.id
-        GROUP BY p.category
-        ORDER BY order_count DESC
-        LIMIT 5
-    """
-    df = client.query(query).to_dataframe()
-    return jsonify(df.to_dict(orient="records"))
-
-@app.route("/predict")
-def predict():
-    query = """
-        SELECT *
-        FROM ML.PREDICT(
-          MODEL `comm034coursework-6875078.thelook.customer_segment_clustering`,
-          (
-            SELECT o.user_id,
-                   ROUND(AVG(oi.sale_price), 2) AS avg_spend,
-                   COUNT(DISTINCT o.order_id) AS count_orders,
-                   DATE_DIFF(CURRENT_DATE(), MAX(o.created_at), DAY) AS days_since_order
-            FROM `comm034coursework-6875078.thelook.orders` AS o
-            JOIN `comm034coursework-6875078.thelook.order_items` AS oi
-            ON o.order_id = oi.order_id
-            WHERE o.status = 'Complete'
-            GROUP BY o.user_id
-          )
-        )
-    """
-    df = client.query(query).to_dataframe()
-    return df.to_html()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
