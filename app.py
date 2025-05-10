@@ -60,18 +60,19 @@ def api_data():
 @app.route("/predict")
 def predict():
     query = """
-        SELECT * FROM ML.PREDICT(
+        SELECT *
+        FROM ML.PREDICT(
           MODEL `comm034coursework-6875078.thelook.customer_segment_clustering`,
           (
-            SELECT user_id,
-                   ROUND(AVG(sale_price), 2) AS avg_spend,
-                   COUNT(DISTINCT order_id) AS count_orders,
-                   DATE_DIFF(CURRENT_DATE(), MAX(created_at), DAY) AS days_since_order
-            FROM `comm034coursework-6875078.thelook.orders` o
-            JOIN `comm034coursework-6875078.thelook.order_items` oi
+            SELECT o.user_id,
+                   ROUND(AVG(oi.sale_price), 2) AS avg_spend,
+                   COUNT(DISTINCT o.order_id) AS count_orders,
+                   DATE_DIFF(CURRENT_DATE(), MAX(o.created_at), DAY) AS days_since_order
+            FROM `comm034coursework-6875078.thelook.orders` AS o
+            JOIN `comm034coursework-6875078.thelook.order_items` AS oi
             ON o.order_id = oi.order_id
             WHERE o.status = 'Complete'
-            GROUP BY user_id
+            GROUP BY o.user_id
           )
         )
     """
